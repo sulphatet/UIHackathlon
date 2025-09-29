@@ -1,180 +1,369 @@
-#!/usr/bin/env python3
-import argparse
-import json
-import sys
-import time
-from typing import Dict, List, Optional
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coordinate Mover 9000 - UNFORGETTABLE EDITION</title>
+    <style>
+        /* General Body & Worst UI Styles */
+        body {
+            font-family: 'Comic Sans MS', 'Papyrus', cursive;
+            background-color: #ff00ff; /* Bright Magenta */
+            color: #00ffff; /* Bright Cyan */
+            margin: 0;
+            padding: 40px;
+            height: 100vh;
+            overflow: hidden; /* Hide scrollbars */
+            cursor: none !important; /* Hide real cursor */
+        }
 
-from yt_dlp import YoutubeDL
-from youtube_transcript_api import (
-    YouTubeTranscriptApi,
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
-)
+        /* Ensure ALL elements have hidden cursor */
+        * {
+            cursor: none !important;
+        }
 
-def get_video_entries(playlist_url: str) -> List[Dict]:
-    """
-    Return a list of {id, title, url} for videos in the playlist.
-    Uses yt-dlp with extract_flat for speed.
-    """
-    ydl_opts = {
-        "quiet": True,
-        "extract_flat": True,   # don't resolve each video fully
-        "skip_download": True,
-        "dump_single_json": True,
-    }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(playlist_url, download=False)
-    # If a single video URL is passed, normalize to list
-    if info.get("_type") == "playlist":
-        entries = info.get("entries", [])
-    else:
-        entries = [info]
+        /* Rulers on the borders */
+        .ruler {
+            position: fixed;
+            background: yellow;
+            color: black;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            z-index: 1000;
+            display: flex;
+            font-size: 10px;
+        }
 
-    videos = []
-    for e in entries:
-        # Some entries can be None for unavailable items
-        if not e:
-            continue
-        vid = e.get("id")
-        title = e.get("title") or ""
-        # Build a watch URL (flat extractor may not provide the full URL)
-        url = e.get("url") or f"https://www.youtube.com/watch?v={vid}" if vid else None
-        if vid and url:
-            videos.append({"id": vid, "title": title, "url": url})
-    return videos
+        .ruler.horizontal { top: 0; left: 0; width: 100%; height: 40px; padding-left: 40px; align-items: flex-end; }
+        .ruler.vertical { top: 0; left: 0; width: 40px; height: 100%; padding-top: 40px; flex-direction: column; justify-content: flex-start; }
+        .ruler .tick { position: absolute; background: black; }
+        .ruler .label { position: absolute; font-weight: bold; }
+        .ruler.horizontal .tick { width: 1px; height: 10px; bottom: 0; }
+        .ruler.horizontal .tick.major { height: 20px; }
+        .ruler.horizontal .label { bottom: 20px; transform: translateX(-50%); }
+        .ruler.vertical .tick { height: 1px; width: 10px; right: 0; }
+        .ruler.vertical .tick.major { width: 20px; }
+        .ruler.vertical .label { right: 25px; transform: translateY(-50%); }
 
-def fetch_transcript(video_id: str, preferred_lang: Optional[str]) -> Dict:
-    """
-    Try to fetch transcript:
-      1) preferred_lang if provided
-      2) 'en'
-      3) any available (manual first, then auto-generated)
-    Returns dict with keys:
-      - "language" (chosen)
-      - "is_generated" (bool)
-      - "segments" (list of {text,start,duration})
-      - "text" (single concatenated string)
-    If no transcript: returns {"error": "..."}.
-    """
-    try:
-        # If a preferred language is specified, try it first
-        if preferred_lang:
-            try:
-                segs = YouTubeTranscriptApi.get_transcript(video_id, languages=[preferred_lang])
-                return _format_transcript(segs, preferred_lang, is_generated=_is_generated(video_id, preferred_lang))
-            except NoTranscriptFound:
-                pass  # fall through
+        /* Main Content */
+        .container {
+            text-align: center;
+            padding-top: 100px;
+        }
 
-        # Try English next
-        try:
-            segs = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
-            return _format_transcript(segs, "en", is_generated=_is_generated(video_id, "en"))
-        except NoTranscriptFound:
-            pass
+        h1 {
+            font-size: 4em;
+            text-shadow: 3px 3px 0px #ff0000;
+            animation: text-flicker 2s linear infinite;
+        }
 
-        # Try to find any available transcript (manual preferred, else auto)
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+        p {
+            font-size: 1.5em;
+            background-color: navy;
+            border: 5px dashed orange;
+            padding: 20px;
+        }
 
-        # Prefer a manually created transcript in any language
-        for tr in transcripts:
-            if not tr.is_generated:
-                try:
-                    segs = tr.fetch()
-                    return _format_transcript(segs, tr.language_code, is_generated=False)
-                except Exception:
-                    continue
+        input {
+            font-size: 2em;
+            padding: 10px;
+            border: 10px groove red;
+            background-color: lightgreen;
+            text-align: center;
+        }
+        
+        /* The terrible buttons */
+        .action-button {
+            margin: 20px;
+            padding: 20px 40px;
+            font-size: 1.5em;
+            font-weight: bold;
+            background: linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet);
+            color: white;
+            border: 5px outset gold;
+            text-shadow: 2px 2px 4px #000;
+            animation: rainbow-blink 0.5s infinite;
+        }
 
-        # Fallback to auto-generated in any language
-        for tr in transcripts:
-            if tr.is_generated:
-                try:
-                    segs = tr.fetch()
-                    return _format_transcript(segs, tr.language_code, is_generated=True)
-                except Exception:
-                    continue
+        #rick-roll-btn {
+            background: linear-gradient(90deg, #ff00ff, #00ffff, #ff00ff);
+            border-color: #00ff00;
+            animation: text-flicker 0.3s infinite, rainbow-blink 0.8s infinite;
+        }
+        
+        /* Annoying Pop-up Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 500px;
+            padding: 30px;
+            background-color: lime;
+            border: 15px ridge darkred;
+            text-align: center;
+            box-shadow: 0 0 20px 10px rgba(0,0,0,0.8);
+        }
+        .modal h2 { font-size: 3em; color: blue; margin-top: 0; }
+        .modal p { font-size: 1.2em; background: none; border: none; color: black; }
+        .close-button { position: absolute; top: 5px; right: 5px; background: red; color: white; border: 2px solid white; width: 20px; height: 20px; line-height: 20px; text-align: center; font-weight: bold; }
 
-        return {"error": "No transcript available."}
+        /* The CSS-only Fake Cursor */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
 
-    except TranscriptsDisabled:
-        return {"error": "Transcripts are disabled for this video."}
-    except VideoUnavailable:
-        return {"error": "Video is unavailable (private/removed/geo-blocked)."}
-    except Exception as e:
-        return {"error": f"Failed to fetch transcript: {e}"}
+        #fake-cursor {
+            position: fixed;
+            width: 60px;
+            height: 60px;
+            background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);
+            border-radius: 50%;
+            z-index: 100000; /* Above EVERYTHING! */
+            pointer-events: none;
+            transition: top 0.1s linear, left 0.1s linear;
+            animation: spin 1s linear infinite;
+            transform-origin: center center;
+        }
 
-def _is_generated(video_id: str, lang_code: str) -> bool:
-    """
-    Check whether the chosen transcript language is auto-generated.
-    """
-    try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-        # Exact language match first
-        for tr in transcripts:
-            if tr.language_code == lang_code:
-                return tr.is_generated
-        # Otherwise, we might have fetched a translated version;
-        # best effort: if any transcript with that code exists, report its is_generated
-        return False
-    except Exception:
-        return False
+        #fake-cursor::before {
+            content: '';
+            position: absolute;
+            top: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; 
+            height: 0; 
+            border-left: 15px solid transparent;
+            border-right: 15px solid transparent;
+            border-bottom: 25px solid white;
+            filter: drop-shadow(0 -1px 1px black);
+        }
 
-def _format_transcript(segments: List[Dict], language_code: str, is_generated: bool) -> Dict:
-    text = " ".join(s.get("text", "").strip() for s in segments if s.get("text"))
-    return {
-        "language": language_code,
-        "is_generated": is_generated,
-        "segments": segments,  # each: {text, start, duration}
-        "text": text,
-    }
+        /* The flying ads */
+        .ad {
+            display: none;
+            position: fixed;
+            z-index: 5000;
+            width: 300px;
+            background: orange;
+            border: 5px dotted blue;
+            color: black;
+            padding: 20px;
+            text-align: center;
+            font-size: 1.5em;
+            box-shadow: 10px 10px 5px rgba(0,0,0,0.5);
+        }
 
-def main():
-    parser = argparse.ArgumentParser(description="Export YouTube playlist videos and transcripts to JSON.")
-    parser.add_argument("playlist_url", help="YouTube playlist link (or single video link).")
-    parser.add_argument("-o", "--out", default="playlist_transcripts.json", help="Output JSON file path.")
-    parser.add_argument("--lang", default=None, help="Preferred language code (e.g., 'en', 'hi').")
-    parser.add_argument("--sleep", type=float, default=0.5, help="Seconds to sleep between video requests.")
-    args = parser.parse_args()
+        .ad.show { display: block; }
+        .ad-anim-slide-right { animation: slideRight 5s linear; }
+        .ad-anim-slide-left { animation: slideLeft 5s linear; }
+        .ad-anim-drop-down { animation: dropDown 4s ease-in-out; }
 
-    print("Fetching playlist entries...")
-    try:
-        videos = get_video_entries(args.playlist_url)
-    except Exception as e:
-        print(f"Error reading playlist: {e}", file=sys.stderr)
-        sys.exit(1)
+        /* The link marquee */
+        .rick-roll-marquee {
+            position: fixed;
+            bottom: 10px;
+            left: 0;
+            width: 100%;
+            background-color: black;
+            color: lime;
+            font-size: 1.5em;
+            z-index: 6000;
+        }
 
-    print(f"Found {len(videos)} video(s). Getting transcripts...")
-    output_items = []
-    for i, v in enumerate(videos, start=1):
-        vid = v["id"]
-        title = v["title"]
-        url = v["url"]
-        print(f"[{i}/{len(videos)}] {title or vid}")
-        tr = fetch_transcript(vid, args.lang)
+        /* Keyframe Animations */
+        @keyframes rainbow-blink {
+            0% { transform: scale(1); box-shadow: 0 0 20px yellow; }
+            50% { transform: scale(1.1); box-shadow: 0 0 30px red; }
+            100% { transform: scale(1); box-shadow: 0 0 20px yellow; }
+        }
+        @keyframes text-flicker { 0% { opacity: 0.8; } 5% { opacity: 1; } 10% { opacity: 0.5; } 15% { opacity: 1; } 25% { opacity: 0.7; } 30% { opacity: 1; } 100% { opacity: 1; } }
+        @keyframes slideRight { from { left: -350px; top: 20%; } to { left: 110vw; top: 25%; } }
+        @keyframes slideLeft { from { right: -350px; top: 60%; } to { right: 110vw; top: 55%; } }
+        @keyframes dropDown { 0% { top: -200px; left: 40%; } 50% { top: 50vh; left: 40%; } 100% { top: 110vh; left: 40%; } }
+    </style>
+</head>
+<body>
 
-        output_items.append({
-            "title": title,
-            "url": url,
-            "video_id": vid,
-            "transcript": tr,  # either transcript dict or {"error": "..."}
-        })
+    <div class="ruler horizontal" id="ruler-x"></div>
+    <div class="ruler vertical" id="ruler-y"></div>
 
-        time.sleep(args.sleep)
+    <div id="fake-cursor" style="left: 100px; top: 100px;"></div>
 
-    data = {
-        "source_playlist": args.playlist_url,
-        "video_count": len(output_items),
-        "items": output_items,
-    }
+    <div class="container">
+        <h1>Welcome to Coordinate Mover 9000!</h1>
+        <p>
+            The future is here! Stop dragging, start typing. <br>
+            To move the cursor, type coordinates (e.g., <strong>450, 320</strong>), press <strong>Enter</strong>. To "click", press the <strong>Spacebar</strong>.
+            <br><br>
+            For the niche few who would still like to use a mouse, <strong>please buy premium!</strong>
+        </p>
+        <input type="text" id="coord-input" placeholder="x, y" autofocus>
 
-    try:
-        with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"Saved to {args.out}")
-    except Exception as e:
-        print(f"Failed to write JSON: {e}", file=sys.stderr)
-        sys.exit(1)
+        <br>
+        <button class="action-button" id="premium-btn">Tired of this? Get Premium!</button>
+        <button class="action-button" id="rick-roll-btn">Click for a Surprise!</button> 
+    </div>
 
-if __name__ == "__main__":
-    main()
+    <div id="premium-modal" class="modal">
+        <div class="close-button" id="close-modal">X</div>
+        <h2>GO PREMIUM NOW!</h2>
+        <p>Unlock the revolutionary "Mouse Mode" and get rid of all pop-ups for only <strong>$99.99!</strong> You are among a special few who appreciate true innovation. Don't you want to use a mouse again? (Close button coordinates are somewhere near the top right, probably).</p>
+    </div>
+
+    <div class="ad" id="ad1">
+        <h3>MASTER AI IN 3 HOURS!</h3>
+        <p>Our revolutionary course will make you an AI expert overnight! GUARANTEED!</p>
+    </div>
+    <div class="ad" id="ad2">
+        <h3>BUY PREMIUM NOW!</h3>
+        <p>This experience could be so much better. Click... oh wait, you can't. Just buy it.</p>
+    </div>
+    <div class="ad" id="ad3">
+        <h3>Confused by coordinates?</h3>
+        <p>Our premium version comes with a mouse pointer! A relic of the past, now a luxury feature!</p>
+    </div>
+
+    <marquee class="rick-roll-marquee" scrollamount="10">For a better experience, please visit: https://www.youtube.com/watch?v=dQw4w9WgXcQ</marquee>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const coordInput = document.getElementById('coord-input');
+            const fakeCursor = document.getElementById('fake-cursor');
+            const premiumBtn = document.getElementById('premium-btn');
+            const rickRollBtn = document.getElementById('rick-roll-btn');
+            const premiumModal = document.getElementById('premium-modal');
+            const closeModalBtn = document.getElementById('close-modal');
+
+            // --- 1. Constant Annoying Alert Pop-ups ---
+            setInterval(() => {
+                alert('Please buy premium for $99.99');
+            }, 12000);
+
+            // --- 2. Coordinate-based Movement & FORCED FOCUS ---
+            coordInput.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    const coords = event.target.value.split(',');
+                    if (coords.length === 2) {
+                        const x = parseInt(coords[0].trim(), 10);
+                        const y = parseInt(coords[1].trim(), 10);
+                        if (!isNaN(x) && !isNaN(y)) {
+                            fakeCursor.style.left = `${x}px`;
+                            fakeCursor.style.top = `${y}px`;
+                        }
+                    }
+                    event.target.value = ''; // Clear input
+                }
+            });
+            
+            // Force focus on the input box forever
+            coordInput.addEventListener('blur', () => coordInput.focus());
+
+            // --- 3. Click Simulation with the Spacebar ---
+            coordInput.addEventListener('keyup', function(event) {
+                if (event.code === 'Space') {
+                    event.preventDefault();
+
+                    const cursorRect = fakeCursor.getBoundingClientRect();
+                    const cursorX = cursorRect.left + (cursorRect.width / 2);
+                    const cursorY = cursorRect.top + (cursorRect.height / 2);
+
+                    const premiumBtnRect = premiumBtn.getBoundingClientRect();
+                    const rickRollBtnRect = rickRollBtn.getBoundingClientRect();
+                    const closeModalBtnRect = closeModalBtn.getBoundingClientRect();
+
+                    if (cursorX >= premiumBtnRect.left && cursorX <= premiumBtnRect.right &&
+                        cursorY >= premiumBtnRect.top && cursorY <= premiumBtnRect.bottom) {
+                        premiumBtn.click();
+                    } 
+                    else if (cursorX >= rickRollBtnRect.left && cursorX <= rickRollBtnRect.right &&
+                             cursorY >= rickRollBtnRect.top && cursorY <= rickRollBtnRect.bottom) {
+                        rickRollBtn.click();
+                    }
+                    else if (cursorX >= closeModalBtnRect.left && cursorX <= closeModalBtnRect.right &&
+                             cursorY >= closeModalBtnRect.top && cursorY <= closeModalBtnRect.bottom) {
+                        closeModalBtn.click();
+                    }
+                }
+            });
+
+            // --- 4. Button Actions ---
+            premiumBtn.addEventListener('click', () => premiumModal.style.display = 'block');
+            closeModalBtn.addEventListener('click', () => premiumModal.style.display = 'none');
+            rickRollBtn.addEventListener('click', () => {
+                window.location.href = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+            });
+
+            // --- 5. Flying Ad Manager ---
+            const ads = [document.getElementById('ad1'), document.getElementById('ad2'), document.getElementById('ad3')];
+            const animations = ['ad-anim-slide-right', 'ad-anim-slide-left', 'ad-anim-drop-down'];
+            
+            setInterval(() => {
+                const randomAd = ads[Math.floor(Math.random() * ads.length)];
+                const randomAnimation = animations[Math.floor(Math.random() * animations.length)];
+                
+                if (!randomAd.classList.contains('show')) {
+                    randomAd.className = 'ad';
+                    void randomAd.offsetWidth;
+                    randomAd.classList.add('show', randomAnimation);
+
+                    setTimeout(() => {
+                        randomAd.classList.remove('show', randomAnimation);
+                    }, 5000);
+                }
+            }, 6000);
+
+            // --- 6. Dynamically Generate Rulers ---
+            const rulerX = document.getElementById('ruler-x');
+            const rulerY = document.getElementById('ruler-y');
+            const step = 50;
+
+            function updateRulers() {
+                rulerX.innerHTML = '';
+                rulerY.innerHTML = '';
+
+                for (let i = 0; i < window.innerWidth + 200; i += step / 5) {
+                    const tick = document.createElement('div');
+                    tick.className = 'tick';
+                    tick.style.left = `${i}px`;
+                    if (i % step === 0) {
+                        tick.classList.add('major');
+                        const label = document.createElement('span');
+                        label.className = 'label';
+                        label.textContent = i;
+                        label.style.left = `${i}px`;
+                        rulerX.appendChild(label);
+                    }
+                    rulerX.appendChild(tick);
+                }
+                for (let i = 0; i < window.innerHeight + 200; i += step / 5) {
+                    const tick = document.createElement('div');
+                    tick.className = 'tick';
+                    tick.style.top = `${i}px`;
+                    if (i % step === 0) {
+                        tick.classList.add('major');
+                        const label = document.createElement('span');
+                        label.className = 'label';
+                        label.textContent = i;
+                        label.style.top = `${i}px`;
+                        rulerY.appendChild(label);
+                    }
+                    rulerY.appendChild(tick);
+                }
+            }
+            updateRulers();
+            window.addEventListener('resize', updateRulers);
+
+            // --- 7. Exit Confirmation ---
+            window.addEventListener('beforeunload', function (e) {
+                e.preventDefault();
+                e.returnValue = '';
+            });
+        });
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+import time
+from typing import Dict, List, Optional
+
+from yt_dlp import YoutubeDL
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
+    TranscriptsDisabled,
+    NoTranscriptFound,
+    VideoUnavailable,
+)
+
+def get_video_entries(playlist_url: str) -> List[Dict]:
+    """
+    Return a list of {id, title, url} for videos in the playlist.
+    Uses yt-dlp with extract_flat for speed.
+    """
+    ydl_opts = {
+        "quiet": True,
+        "extract_flat": True,   # don't resolve each video fully
+        "skip_download": True,
+        "dump_single_json": True,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(playlist_url, download=False)
+    # If a single video URL is passed, normalize to list
+    if info.get("_type") == "playlist":
+        entries = info.get("entries", [])
+    else:
+        entries = [info]
+
+    videos = []
+    for e in entries:
+        # Some entries can be None for unavailable items
+        if not e:
+            continue
+        vid = e.get("id")
+        title = e.get("title") or ""
+        # Build a watch URL (flat extractor may not provide the full URL)
+        url = e.get("url") or f"https://www.youtube.com/watch?v={vid}" if vid else None
+        if vid and url:
+            videos.append({"id": vid, "title": title, "url": url})
+    return videos
+
+def fetch_transcript(video_id: str, preferred_lang: Optional[str]) -> Dict:
+    """
+    Try to fetch transcript:
+      1) preferred_lang if provided
+      2) 'en'
+      3) any available (manual first, then auto-generated)
+    Returns dict with keys:
+      - "language" (chosen)
+      - "is_generated" (bool)
+      - "segments" (list of {text,start,duration})
+      - "text" (single concatenated string)
+    If no transcript: returns {"error": "..."}.
+    """
+    try:
+        # If a preferred language is specified, try it first
+        if preferred_lang:
+            try:
+                segs = YouTubeTranscriptApi.get_transcript(video_id, languages=[preferred_lang])
+                return _format_transcript(segs, preferred_lang, is_generated=_is_generated(video_id, preferred_lang))
+            except NoTranscriptFound:
+                pass  # fall through
+
+        # Try English next
+        try:
+            segs = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+            return _format_transcript(segs, "en", is_generated=_is_generated(video_id, "en"))
+        except NoTranscriptFound:
+            pass
+
+        # Try to find any available transcript (manual preferred, else auto)
+        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+
+        # Prefer a manually created transcript in any language
+        for tr in transcripts:
+            if not tr.is_generated:
+                try:
+                    segs = tr.fetch()
+                    return _format_transcript(segs, tr.language_code, is_generated=False)
+                except Exception:
+                    continue
+
+        # Fallback to auto-generated in any language
+        for tr in transcripts:
+            if tr.is_generated:
+                try:
+                    segs = tr.fetch()
+                    return _format_transcript(segs, tr.language_code, is_generated=True)
+                except Exception:
+                    continue
+
+        return {"error": "No transcript available."}
+
+    except TranscriptsDisabled:
+        return {"error": "Transcripts are disabled for this video."}
+    except VideoUnavailable:
+        return {"error": "Video is unavailable (private/removed/geo-blocked)."}
+    except Exception as e:
+        return {"error": f"Failed to fetch transcript: {e}"}
+
+def _is_generated(video_id: str, lang_code: str) -> bool:
+    """
+    Check whether the chosen transcript language is auto-generated.
+    """
+    try:
+        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+        # Exact language match first
+        for tr in transcripts:
+            if tr.language_code == lang_code:
+                return tr.is_generated
+        # Otherwise, we might have fetched a translated version;
+        # best effort: if any transcript with that code exists, report its is_generated
+        return False
+    except Exception:
+        return False
+
+def _format_transcript(segments: List[Dict], language_code: str, is_generated: bool) -> Dict:
+    text = " ".join(s.get("text", "").strip() for s in segments if s.get("text"))
+    return {
+        "language": language_code,
+        "is_generated": is_generated,
+        "segments": segments,  # each: {text, start, duration}
+        "text": text,
+    }
+
+def main():
+    parser = argparse.ArgumentParser(description="Export YouTube playlist videos and transcripts to JSON.")
+    parser.add_argument("playlist_url", help="YouTube playlist link (or single video link).")
+    parser.add_argument("-o", "--out", default="playlist_transcripts.json", help="Output JSON file path.")
+    parser.add_argument("--lang", default=None, help="Preferred language code (e.g., 'en', 'hi').")
+    parser.add_argument("--sleep", type=float, default=0.5, help="Seconds to sleep between video requests.")
+    args = parser.parse_args()
+
+    print("Fetching playlist entries...")
+    try:
+        videos = get_video_entries(args.playlist_url)
+    except Exception as e:
+        print(f"Error reading playlist: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Found {len(videos)} video(s). Getting transcripts...")
+    output_items = []
+    for i, v in enumerate(videos, start=1):
+        vid = v["id"]
+        title = v["title"]
+        url = v["url"]
+        print(f"[{i}/{len(videos)}] {title or vid}")
+        tr = fetch_transcript(vid, args.lang)
+
+        output_items.append({
+            "title": title,
+            "url": url,
+            "video_id": vid,
+            "transcript": tr,  # either transcript dict or {"error": "..."}
+        })
+
+        time.sleep(args.sleep)
+
+    data = {
+        "source_playlist": args.playlist_url,
+        "video_count": len(output_items),
+        "items": output_items,
+    }
+
+    try:
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"Saved to {args.out}")
+    except Exception as e:
+        print(f"Failed to write JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
